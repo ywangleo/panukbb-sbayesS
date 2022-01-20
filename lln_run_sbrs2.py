@@ -72,12 +72,12 @@ def main(args):
     backend = hb.ServiceBackend(billing_project='ukbb_diverse_pops',
                                 bucket='ukbb-diverse-pops')
 
-    b = hb.Batch(backend=backend, name='sbayesS', default_python_image='gcr.io/hail-vdc/python-dill:3.7-slim')
+    b = hb.Batch(backend=backend, name='sbayesS')
     sbayesS_img = 'gcr.io/ukbb-diversepops-neale/ywang-sbrs:test'
 
     for idx in range(args.idx_start, args.idx_end, args.idx_step):
         format_job = b.new_python_job()
-        format_trait = format_job.call(format_to_ma, idx)
+        format_trait = format_job.image('gcr.io/hail-vdc/python-dill:3.7-slim').call(format_to_ma, idx)
 
         run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=format_trait.as_str())
 
