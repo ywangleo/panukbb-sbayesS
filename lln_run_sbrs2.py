@@ -46,8 +46,8 @@ def run_sbayesS(b: hb.batch.Batch,
     j.memory('highmem')
 
     # input for sbayesS
-    sumstats_path = f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma'
-    ldref_path = f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt'
+    sumstats_path = b.read_input(f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma')
+    ldref_path = b.read_input('gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt')
     out_path = f'gs://gwasns-analysis/panukbb/outputs/{trait}'
 
     # not sure about this part?
@@ -69,8 +69,8 @@ def run_sbayesS(b: hb.batch.Batch,
 
 
 def main(args):
-    backend = hb.ServiceBackend(billing_project='ukbb_diverse_pops',
-                                bucket='ukbb-diverse-pops')
+    backend = hb.ServiceBackend(billing_project='ukb_diverse_pops',
+                                bucket='ukb-diverse-pops')
 
     b = hb.Batch(backend=backend, name='sbayesS')
     sbayesS_img = 'gcr.io/ukbb-diversepops-neale/ywang-sbrs:test'
@@ -81,7 +81,7 @@ def main(args):
 
         run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=format_trait.as_str())
 
-    b.run(open=True)
+    b.run()
     backend.close()
 
 
