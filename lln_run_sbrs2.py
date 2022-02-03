@@ -77,12 +77,12 @@ def main(args):
     b = hb.Batch(backend=backend, name='sbayesS')
     sbayesS_img = 'gcr.io/ukbb-diversepops-neale/ywang-sbrs:test'
 
-    image = hb.build_python_image('gcr.io/ukbb-diversepops-neale/batch-python:test',
+    #image = hb.build_python_image('gcr.io/ukbb-diversepops-neale/batch-python:test',
                                requirements=['hail'])
 
     for idx in range(args.idx_start, args.idx_end, args.idx_step):
         format_job = b.new_python_job()
-        format_trait = format_job.image('ggcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, idx)
+        format_trait = format_job.image('gcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, idx)
 
         run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=format_trait.as_str())
 
