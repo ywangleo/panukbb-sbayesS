@@ -78,7 +78,7 @@ def main(args):
     sbayesS_img = 'gcr.io/ukbb-diversepops-neale/ywang-sbrs:test'
 
     #image = hb.build_python_image('gcr.io/ukbb-diversepops-neale/batch-python:test',
-                               requirements=['hail'])
+    #                           requirements=['hail'])
 
     for idx in range(args.idx_start, args.idx_end, args.idx_step):
         format_job = b.new_python_job()
