@@ -6,44 +6,46 @@ import argparse
 def format_to_ma(trait: str,
                  Ns: int):
     # HM3 SNP list for SBayesS
-    snps = hl.import_table("gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_v3_50k.ldm.sparse.info")
-    snps = snps.annotate(locus=snps.Chrom + ":" + snps.PhysPos)
-    snps = snps.key_by("locus")
-
-    # format GWAS
-    trait_path = f'gs://ukb-diverse-pops/ld_prune/export_results/2112_final_results/{trait}.tsv.bgz'
-    gwas = hl.import_table(trait_path)
-    gwas = gwas.annotate(locus=(gwas.chr + ":" + gwas.pos), N=Ns)
-    gwas = gwas.key_by("locus")
-    gwas = gwas.semi_join(snps)
-    gwas2 = gwas.annotate(SNP=snps[gwas.locus].SNP)
-
-    gwas3 = gwas2.filter(hl.is_defined(gwas2.SNP), keep=True)
-    gwas3 = gwas3.key_by()
-    gwas4 = gwas3.select(gwas3.SNP, gwas3.ref, gwas3.alt, gwas3.af_EUR, gwas3.beta_EUR, gwas3.se_EUR, gwas3.pval_EUR,
-                        gwas3.N)
-    gwas4 = gwas4.rename(
-        {'ref': 'A1', 'alt': 'A2', 'af_EUR': 'freq', 'beta_EUR': 'b', 'se_EUR': 'se', 'pval_EUR': 'p'})
-    gwas4.export(f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma')
+    # snps = hl.import_table("gs://gwasns-analysis/panukbb/ukbEURu_hm3_v3_50k.ldm.sparse.info")
+    # snps = snps.annotate(locus=snps.Chrom + ":" + snps.PhysPos)
+    # snps = snps.key_by("locus")
+    #
+    # # format GWAS
+    # trait_path = f'gs://ukb-diverse-pops/ld_prune/export_results/2112_final_results/{trait}.tsv.bgz'
+    # gwas = hl.import_table(trait_path)
+    # gwas = gwas.annotate(locus=(gwas.chr + ":" + gwas.pos), N=Ns)
+    # gwas = gwas.key_by("locus")
+    # gwas = gwas.semi_join(snps)
+    # gwas2 = gwas.annotate(SNP=snps[gwas.locus].SNP)
+    #
+    # gwas3 = gwas2.filter(hl.is_defined(gwas2.SNP), keep=True)
+    # gwas3 = gwas3.key_by()
+    # gwas4 = gwas3.select(gwas3.SNP, gwas3.ref, gwas3.alt, gwas3.af_EUR, gwas3.beta_EUR, gwas3.se_EUR, gwas3.pval_EUR,
+    #                     gwas3.N)
+    # gwas4 = gwas4.rename(
+    #     {'ref': 'A1', 'alt': 'A2', 'af_EUR': 'freq', 'beta_EUR': 'b', 'se_EUR': 'se', 'pval_EUR': 'p'})
+    # gwas4.export(f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma')
+    return trait
 
 
 def run_sbayesS(b: hb.batch.Batch,
                 image: str,
                 trait: str,
-                depends_on_j,
-                ldref_path: str
+                depends_on_j
                 ):
     j = b.new_job(name=f'run-sbayesS-{trait}')
     j.depends_on(depends_on_j)
     j.image(image)
     j.cpu(4)
     j.memory('highmem')
+    j.storage(f'45Gi')
 
     # input for sbayesS
     sumstats_path = b.read_input(f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma')
     out_path = f'gs://gwasns-analysis/panukbb/outputs/{trait}'
+    ldref_dir = b.read_input('gs://gwasns-analysis/panukbb/ldref/')
 
-    # not sure about this part?
+    # outputs for sbayesS
     j.declare_resource_group(outf={
         'mcmcsamples.Par': '{root}.mcmcsamples.Par',
         'mcmcsamples.SnpEffects': '{root}.mcmcsamples.SnpEffects',
@@ -52,18 +54,28 @@ def run_sbayesS(b: hb.batch.Batch,
     })
 
     j.command(f'''
-    /sbayesS/gctb_2.03beta_Linux/gctb --sbayes S --mldm  {ldref_path} \
-    --gwas-summary {sumstats_path} \
-    --chain-length 10000 --burn-in 2000 --out-freq 10 \
-    --robust --exclude-mhc --num-chains 4 \
-    --out {j.outf}''')
+    python3.8 -c '
+    with open("/io/ukbEURu_hm3_sparse_mldm_list.txt.remapped") as new_mldm_list:
+        with open("{ldref_dir}/ukbEURu_hm3_sparse_mldm_list.txt") as old_mldm_list:
+            orig_file_names = [line.rstrip() for line in old_mldm_list]
+                for orig_path in orig_file_names:
+                    new_mldm_list.write(orig_path.replace("gs://gwasns-analysis/panukbb/ldref/", "{ldref_dir}") + "\n")
+    '
+
+    /sbayesS/gctb_2.03beta_Linux/gctb --sbayes S --mldm /io/ukbEURu_hm3_sparse_mldm_list.txt.remapped \
+        --gwas-summary {sumstats_path} \
+        --chain-length 10000 --burn-in 2000 --out-freq 10 \
+        --robust --exclude-mhc --num-chains 4 \
+        --out {j.outf}
+
+    ''')
 
     b.write_output(j.outf, f'{out_path}')
 
 
 def main(args):
     backend = hb.ServiceBackend(billing_project='ukb_diverse_pops',
-                                bucket='ukb-diverse-pops')
+                                remote_tmpdir='gs://ukb-diverse-pops')
 
     b = hb.Batch(backend=backend, name='sbayesS')
     sbayesS_img = 'gcr.io/ukbb-diversepops-neale/ywang-sbrs:test'
@@ -72,10 +84,10 @@ def main(args):
     #                           requirements=['hail'])
 
     # read ld matrix
-    ldref_path = b.read_input('gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt2')
-    for chrom in range(1, 23):
-        b.read_input_group(bin=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.bin',
-                           info=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.info')
+    # ldref_path = b.read_input('gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt')
+    # for chrom in range(1, 23):
+    #     b.read_input_group(bin=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.bin',
+    #                        info=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.info')
 
     # extract sample size information
     phenos = hl.import_table('gs://gwasns-analysis/panukbb/panukbbEUR_qcd_phenos_Ns.txt')
@@ -85,9 +97,9 @@ def main(args):
         trait = tmp.phenotype_id.collect()[0]
         Ns = tmp.Ntotal.collect()[0]
 
-        format_job = b.new_python_job()
+        format_job = b.new_python_job(name=f'format-{trait}')
         format_job.image('gcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, trait, Ns)
-        run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=trait, ldref_path=ldref_path)
+        run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=trait)
 
     b.run()
     backend.close()
