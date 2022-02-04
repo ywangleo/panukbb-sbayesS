@@ -3,15 +3,8 @@ import hailtop.batch as hb
 import argparse
 
 
-def format_to_ma(seq: int):
-    # extract sample size information
-    import hail as hl
-
-    phenos = hl.import_table('gs://gwasns-analysis/panukbb/panukbbEUR_qcd_phenos_Ns.txt')
-    tmp = phenos.filter(hl.int(phenos.idx) == seq)
-    trait = tmp.phenotype_id.collect()[0]
-    Ns = tmp.Ntotal.collect()[0]
-
+def format_to_ma(trait: str,
+                 Ns: int):
     # HM3 SNP list for SBayesS
     snps = hl.import_table("gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_v3_50k.ldm.sparse.info")
     snps = snps.annotate(locus=snps.Chrom + ":" + snps.PhysPos)
@@ -28,18 +21,17 @@ def format_to_ma(seq: int):
     gwas3 = gwas2.filter(hl.is_defined(gwas2.SNP), keep=True)
     gwas3 = gwas3.key_by()
     gwas4 = gwas3.select(gwas3.SNP, gwas3.ref, gwas3.alt, gwas3.af_EUR, gwas3.beta_EUR, gwas3.se_EUR, gwas3.pval_EUR,
-                         gwas3.N)
+                        gwas3.N)
     gwas4 = gwas4.rename(
         {'ref': 'A1', 'alt': 'A2', 'af_EUR': 'freq', 'beta_EUR': 'b', 'se_EUR': 'se', 'pval_EUR': 'p'})
     gwas4.export(f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma')
-
-    return trait
 
 
 def run_sbayesS(b: hb.batch.Batch,
                 image: str,
                 trait: str,
-                depends_on_j
+                depends_on_j,
+                ldref_path: str
                 ):
     j = b.new_job(name=f'run-sbayesS-{trait}')
     j.depends_on(depends_on_j)
@@ -49,7 +41,6 @@ def run_sbayesS(b: hb.batch.Batch,
 
     # input for sbayesS
     sumstats_path = b.read_input(f'gs://gwasns-analysis/panukbb/sumstats/{trait}.ma')
-    ldref_path = b.read_input('gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt')
     out_path = f'gs://gwasns-analysis/panukbb/outputs/{trait}'
 
     # not sure about this part?
@@ -61,7 +52,7 @@ def run_sbayesS(b: hb.batch.Batch,
     })
 
     j.command(f'''
-    gctb --sbayes S --mldm  {ldref_path} \
+    /sbayesS/gctb_2.03beta_Linux/gctb --sbayes S --mldm  {ldref_path} \
     --gwas-summary {sumstats_path} \
     --chain-length 10000 --burn-in 2000 --out-freq 10 \
     --robust --exclude-mhc --num-chains 4 \
@@ -80,11 +71,23 @@ def main(args):
     #image = hb.build_python_image('gcr.io/ukbb-diversepops-neale/batch-python:test',
     #                           requirements=['hail'])
 
-    for idx in range(args.idx_start, args.idx_end, args.idx_step):
-        format_job = b.new_python_job()
-        format_trait = format_job.image('gcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, idx)
+    # read ld matrix
+    ldref_path = b.read_input('gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt2')
+    for chrom in range(1, 23):
+        b.read_input_group(bin=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.bin',
+                           info=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.info')
 
-        run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=format_trait.as_str())
+    # extract sample size information
+    phenos = hl.import_table('gs://gwasns-analysis/panukbb/panukbbEUR_qcd_phenos_Ns.txt')
+
+    for idx in range(args.idx_start, args.idx_end, args.idx_step):
+        tmp = phenos.filter(hl.int(phenos.idx) == idx)
+        trait = tmp.phenotype_id.collect()[0]
+        Ns = tmp.Ntotal.collect()[0]
+
+        format_job = b.new_python_job()
+        format_job.image('gcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, trait, Ns)
+        run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=trait, ldref_path=ldref_path)
 
     b.run()
     backend.close()
