@@ -4,7 +4,7 @@ import argparse
 
 
 def format_to_ma(trait: str,
-                 Ns: int):
+                 Ns: str):
     # HM3 SNP list for SBayesS
     # snps = hl.import_table("gs://gwasns-analysis/panukbb/ukbEURu_hm3_v3_50k.ldm.sparse.info")
     # snps = snps.annotate(locus=snps.Chrom + ":" + snps.PhysPos)
@@ -36,7 +36,7 @@ def run_sbayesS(b: hb.batch.Batch,
     j = b.new_job(name=f'run-sbayesS-{trait}')
     j.depends_on(depends_on_j)
     j.image(image)
-    j.cpu(4)
+    j.cpu(1)
     j.memory('highmem')
     j.storage(f'45Gi')
 
@@ -55,13 +55,13 @@ def run_sbayesS(b: hb.batch.Batch,
 
     j.command(f'''
     python3.8 -c '
-    with open("/io/ukbEURu_hm3_sparse_mldm_list.txt.remapped") as new_mldm_list:
-        with open("{ldref_dir}/ukbEURu_hm3_sparse_mldm_list.txt") as old_mldm_list:
-            orig_file_names = [line.rstrip() for line in old_mldm_list]
-                for orig_path in orig_file_names:
-                    new_mldm_list.write(orig_path.replace("gs://gwasns-analysis/panukbb/ldref/", "{ldref_dir}") + "\n")
+with open("io/ukbEURu_hm3_sparse_mldm_list.txt.remapped", "w") as new_mldm_list:
+    with open("{ldref_dir}/ukbEURu_hm3_sparse_mldm_list.txt") as old_mldm_list:
+        orig_file_names = [line.rstrip() for line in old_mldm_list]
+        for orig_path in orig_file_names:
+            new_mldm_list.write(orig_path.replace("gs://gwasns-analysis/panukbb/ldref", """{ldref_dir}""") + """\n""")
     '
-
+    
     /sbayesS/gctb_2.03beta_Linux/gctb --sbayes S --mldm /io/ukbEURu_hm3_sparse_mldm_list.txt.remapped \
         --gwas-summary {sumstats_path} \
         --chain-length 10000 --burn-in 2000 --out-freq 10 \
@@ -83,12 +83,6 @@ def main(args):
     #image = hb.build_python_image('gcr.io/ukbb-diversepops-neale/batch-python:test',
     #                           requirements=['hail'])
 
-    # read ld matrix
-    # ldref_path = b.read_input('gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_sparse_mldm_list.txt')
-    # for chrom in range(1, 23):
-    #     b.read_input_group(bin=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.bin',
-    #                        info=f'gs://gwasns-analysis/panukbb/ldref/ukbEURu_hm3_chr{chrom}_v3_50k.ldm.sparse.info')
-
     # extract sample size information
     phenos = hl.import_table('gs://gwasns-analysis/panukbb/panukbbEUR_qcd_phenos_Ns.txt')
 
@@ -98,7 +92,7 @@ def main(args):
         Ns = tmp.Ntotal.collect()[0]
 
         format_job = b.new_python_job(name=f'format-{trait}')
-        format_job.image('gcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, trait, Ns)
+        format_job.image('gcr.io/ukbb-diversepops-neale/batch-python:test').call(format_to_ma, trait=trait, Ns=Ns)
         run_sbayesS(b=b, image=sbayesS_img, depends_on_j=format_job, trait=trait)
 
     b.run()
